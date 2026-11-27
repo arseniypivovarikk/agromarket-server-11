@@ -1,0 +1,17 @@
+import {test,expect,beforeAll} from 'vitest';
+import request from 'supertest';
+import app from '../app.js';
+let token;
+beforeAll(async()=>{const r=await request(app).post('/api/auth/login').send({email:process.env.ADMIN_EMAIL,password:process.env.ADMIN_PASSWORD});token=r.body.token;expect(r.status).toBe(200)});
+const admin=(r)=>r.set('Authorization',`Bearer ${token}`);
+test('invalid email',async()=>{const r=await request(app).post('/api/auth/register').send({name:'Test',email:'bad',password:'12345678'});expect(r.status).toBe(400);expect(r.body.details.map(d=>d.field)).toContain('email')});
+test('short password',async()=>{expect((await request(app).post('/api/auth/register').send({name:'Test',email:'a@test.kz',password:'1234567'})).status).toBe(400)});
+test('mass assignment',async()=>{const r=await request(app).post('/api/auth/register').send({name:'Test',email:'role@test.kz',password:'12345678',role:'admin'});expect(r.status).toBe(201);expect(r.body.user.role).toBe('user')});
+test('negative price',async()=>{expect((await admin(request(app).post('/api/products')).send({name:'Мёд',price:-500,category:'Мёд'})).status).toBe(400)});
+test('empty patch',async()=>{expect((await admin(request(app).patch('/api/products/1')).send({})).status).toBe(400)});
+test('invalid id',async()=>{expect((await request(app).get('/api/products/abc')).status).toBe(400)});
+test('large body',async()=>{expect((await request(app).post('/api/auth/register').send({name:'x'.repeat(200000)})).status).toBe(413)});
+test('helmet',async()=>{const r=await request(app).get('/api/products');expect(r.headers['x-powered-by']).toBeUndefined();expect(r.headers['x-content-type-options']).toBe('nosniff')});
+test('foreign origin',async()=>{expect((await request(app).get('/api/products').set('Origin','https://evil.example')).headers['access-control-allow-origin']).toBeUndefined()});
+test('allowed origin',async()=>{expect((await request(app).get('/api/products').set('Origin','http://localhost:5173')).headers['access-control-allow-origin']).toBe('http://localhost:5173')});
+test('rate limit',async()=>{process.env.TEST_RATE_LIMIT='1';try{for(let i=0;i<11;i++){const r=await request(app).post('/api/auth/login').send({email:'missing@test.kz',password:'wrong'});expect(r.status).toBe(i<10?401:429);if(i===10)expect(r.headers['retry-after']).toBeDefined()}}finally{delete process.env.TEST_RATE_LIMIT}});
